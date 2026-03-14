@@ -1,0 +1,85 @@
+# Care Connect — Data Extraction Pipeline Configuration
+# Override with environment variables where noted.
+
+# Base paths (relative to project root or absolute)
+paths:
+  data_dir: "data"
+  raw_subdir: "raw"  # data_dir/raw_subdir/source_name/
+
+# MedlinePlus API (NLM)
+medlineplus:
+  base_url: "https://wsearch.nlm.nih.gov/ws/query"
+  db: "healthTopics"
+  retmax: 20
+  rate_limit_delay_seconds: 0.75   # 85 requests/minute → ~0.75s between requests
+  request_timeout_seconds: 30
+  # Output: paths.data_dir/raw_subdir/medlineplus/
+  output_filename: "medlineplus_raw.json"  # single file; or set save_per_topic: true
+  save_per_topic: false  # if true, writes one JSON file per topic (e.g. depression.json)
+
+# PubMed E-utilities (NCBI)
+# Set NCBI_API_KEY and NCBI_EMAIL env vars for higher rate limit and compliance
+pubmed:
+  retmax: 10  # max results per query
+  rate_limit_delay_seconds: 0.35  # with API key (~10/sec); use 1.0 without key (~3/sec)
+  request_timeout_seconds: 30
+  output_filename: "pubmed_raw.json"
+
+# NIMH (scraping public HTML pages)
+nimh:
+  rate_limit_delay_seconds: 2.0  # Be polite to government servers
+  request_timeout_seconds: 30
+  user_agent: "CareConnect-Research/1.0 (university research project)"
+  output_filename: "nimh_raw.json"
+
+# Chunking (for RAG)
+chunking:
+  chunk_size: 800       # tokens per chunk (~600 words)
+  chunk_overlap: 100    # token overlap between chunks
+  tokenizer: "cl100k_base"  # tiktoken encoding
+
+# Embedding & vector store
+embedding:
+  model_name: "all-MiniLM-L6-v2"
+  dimension: 384
+  batch_size: 128
+chroma:
+  persist_directory: "data/chroma_db"
+  collection_name: "care_connect"
+
+# RAG: retrieval + Ollama (DeepSeek R1)
+rag:
+  top_k: 8  # number of chunks to retrieve per 
+  ollama_base_url: "http://localhost:11434"
+  ollama_model: "deepseek-r1"  # or deepseek-r1:8b, deepseek-r1:14b, etc.
+  ollama_timeout_seconds: 120
+  ollama_think: true
+  rag_debug_log: true  # set false to disable chunk + CoT logging to logs/rag_chunks.log
+  system_prompt: |
+    You are Care Connect, a mental health information assistant for university
+    students. Your role is to provide clear, supportive health information —
+    not to diagnose, prescribe, or replace professional care.
+
+    SAFETY (highest priority):
+    If the user expresses suicidal thoughts, self-harm, or any crisis,
+    IMMEDIATELY respond with: Please reach out for support right now —
+    call or text 988 (Suicide & Crisis Lifeline) or text HOME to 741741
+    (Crisis Text Line). Do this before any other response.
+
+    INFORMATION:
+    Answer only using the provided context from NIMH, MedlinePlus, and PubMed.
+    If the context does not contain relevant information, say: I don't have
+    reliable information on that — please consult a healthcare provider.
+    Always include the source of your information (e.g., According to NIMH...).
+
+    SCOPE:
+    Only answer questions related to mental health topics: depression, anxiety,
+    sleep, eating disorders, and substance use. For all other medical questions,
+    say: That's outside what I can help with — please consult a doctor.
+
+    DISCLAIMER:
+    End every response with: This is general health information, not medical
+    advice. Please speak with a healthcare professional for personal guidance.
+
+    TONE:
+    Use plain, accessible language. Avoid jargon. Be warm and non-judgmental.
