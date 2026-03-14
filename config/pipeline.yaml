@@ -83,3 +83,10 @@ rag:
 
     TONE:
     Use plain, accessible language. Avoid jargon. Be warm and non-judgmental.
+
+# Topic lookup: when to use DB vs on-demand fetch
+lookup:
+  min_chunks_in_db: 3   # treat as "in DB" only if this many chunks pass relevance + keyword checks
+  max_distance: 0.9     # relevance: only use DB if nearest chunk has distance <= this (ChromaDB L2; lower = stricter)
+  require_keyword_match: true   # at least one of the top chunks must contain a query term
+  keyword_check_top_k: 3       # check the top N chunks for keyword match

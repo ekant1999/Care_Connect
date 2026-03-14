@@ -113,6 +113,37 @@ def retrieve(
     return chunks
 
 
+def retrieve_with_distances(
+    query: str,
+    top_k: Optional[int] = None,
+    project_root: Optional[Path] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Like retrieve() but each chunk includes a "distance" key (ChromaDB L2 or cosine distance).
+    Lower distance = more similar. Used for relevance threshold in topic lookup.
+    """
+    root = project_root or get_project_root()
+    cfg = get_rag_config(root)
+    top_k = top_k or cfg["top_k"]
+    collection, _ = _get_collection(root)
+    model = _get_embedding_model(cfg["embedding_model_name"])
+    query_embedding = model.encode([query], show_progress_bar=False).tolist()[0]
+
+    results = collection.query(
+        query_embeddings=[query_embedding],
+        n_results=top_k,
+        include=["documents", "metadatas", "distances"],
+    )
+    chunks = []
+    if results["documents"] and results["documents"][0]:
+        distances = (results.get("distances") or [[]])[0] if results.get("distances") else []
+        for i, doc in enumerate(results["documents"][0]):
+            meta = (results["metadatas"][0][i] or {}) if results["metadatas"] else {}
+            dist = distances[i] if i < len(distances) else None
+            chunks.append({"text": doc, "metadata": meta, "distance": dist})
+    return chunks
+
+
 def _build_rag_prompt(context_chunks: List[Dict[str, Any]], user_query: str, system_prompt: str) -> str:
     """Build user message: context blocks + question."""
     context_parts = []
