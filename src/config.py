@@ -181,6 +181,18 @@ def get_rag_config(project_root: Optional[Path] = None) -> dict:
     }
 
 
+def get_lookup_config(project_root: Optional[Path] = None) -> dict:
+    """Lookup flow config: when to use DB vs on-demand (relevance + keyword checks)."""
+    pipeline = get_pipeline_config(project_root)
+    lookup = pipeline.get("lookup", {})
+    return {
+        "min_chunks_in_db": int(lookup.get("min_chunks_in_db", 1)),
+        "max_distance": float(lookup.get("max_distance", 1.0)),  # only use DB if nearest chunk distance <= this (L2)
+        "require_keyword_match": bool(lookup.get("require_keyword_match", True)),
+        "keyword_check_top_k": int(lookup.get("keyword_check_top_k", 3)),  # check top N chunks for query terms
+    }
+
+
 def get_raw_data_dir(project_root: Optional[Path] = None) -> Path:
     """Directory containing raw JSON per source (medlineplus, pubmed, nimh)."""
     pipeline = get_pipeline_config(project_root)

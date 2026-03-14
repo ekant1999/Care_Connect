@@ -12,6 +12,7 @@ from src.config import get_project_root
 from src.extractors.medlineplus import MedlinePlusExtractor
 from src.extractors.nimh import NIMHExtractor
 from src.extractors.pubmed import PubMedExtractor
+from src.lookup import get_document_full_text, topic_lookup
 from src.pipeline import run_process
 from src.rag import rag_query
 from src.utils.logger import setup_logger
@@ -57,6 +58,51 @@ def query(question: tuple, top_k: Optional[int], show_chunks: bool) -> None:
             click.echo("[%d] %s | %s" % (i, meta.get("source", ""), meta.get("title", "")))
             click.echo((c.get("text") or "")[:200] + "..." if len(c.get("text") or "") > 200 else (c.get("text") or ""))
             click.echo("")
+
+
+@main.command("lookup")
+@click.argument("topic", nargs=-1, required=True)
+@click.option("--top-k", type=int, default=20, help="Chunks to consider when checking DB (default: 20).")
+def lookup(topic: tuple, top_k: int) -> None:
+    """Topic lookup: return link + summary from DB, or fetch from PubMed/MedlinePlus/NIMH in parallel."""
+    setup_logger()
+    t = " ".join(topic).strip()
+    if not t:
+        click.echo("Provide a topic, e.g. python -m src.cli lookup diabetes")
+        raise SystemExit(1)
+    result = topic_lookup(t, top_k=top_k)
+    from_db = result["found_in_db"]
+    items = result.get("items") or []
+    click.echo("From database: %s" % ("yes" if from_db else "no (fetched on demand)"))
+    if result.get("file"):
+        click.echo("Saved to: %s" % result["file"])
+    click.echo("")
+    if not items:
+        click.echo("No results found.")
+        return
+    for i, it in enumerate(items, 1):
+        click.echo("[%d] %s" % (i, it.get("source", "")))
+        click.echo("    %s" % it.get("title", ""))
+        click.echo("    %s" % it.get("url", ""))
+        click.echo("    %s" % (it.get("summary", "") or ""))
+        click.echo("")
+
+
+@main.command("show")
+@click.argument("topic", nargs=-1, required=True)
+@click.option("--url", "-u", required=True, help="Document URL (from a previous lookup).")
+def show(topic: tuple, url: str) -> None:
+    """Show full text for a document from a previous on-demand lookup (e.g. lookup diabetes then show diabetes -u 'https://...')."""
+    setup_logger()
+    t = " ".join(topic).strip()
+    if not t:
+        click.echo("Provide the topic used in lookup, e.g. python -m src.cli show diabetes -u 'https://...'")
+        raise SystemExit(1)
+    text = get_document_full_text(t, url.strip())
+    if text is None:
+        click.echo("No cached document found for that topic and URL. Run 'lookup %s' first." % t)
+        raise SystemExit(1)
+    click.echo(text)
 
 
 @main.command("extract")
