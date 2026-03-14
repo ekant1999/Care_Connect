@@ -1,0 +1,27 @@
+# Environment and secrets (do not commit)
+.env
+.env.local
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Debug logs (RAG chunk logging)
+logs/
+
+# Data (optional: uncomment if raw/processed data should not be committed)
+# data/raw/
+# data/processed/
