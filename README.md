@@ -93,3 +93,16 @@ python -m src.cli show diabetes -u "https://pubmed.ncbi.nlm.nih.gov/12345/"
 ```
 
 Use the same topic string you used in `lookup` and the URL of the document you want to read in full. The full text is read from the cached on-demand file for that topic.
+
+<img width="846" height="393" alt="image" src="https://github.com/user-attachments/assets/9fccb637-3ddd-4264-86f6-3353eceb79b0" />
+
+<img width="829" height="417" alt="image" src="https://github.com/user-attachments/assets/e44b2654-5901-4705-8e5f-f4ccdf6661f6" />
+
+<img width="796" height="341" alt="image" src="https://github.com/user-attachments/assets/bdd87537-98c0-4a49-b14d-60491e7725b1" />
+
+<img width="826" height="353" alt="image" src="https://github.com/user-attachments/assets/27d1e015-0d47-4f98-9177-ac51a724f989" />
+
+<img width="782" height="325" alt="image" src="https://github.com/user-attachments/assets/b9357c52-4499-4568-9a60-9dc6c2ba25d0" />
+
+
+
