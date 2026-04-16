@@ -115,8 +115,8 @@ def get_pubmed_config(project_root: Optional[Path] = None) -> dict:
 
 def get_nimh_config(project_root: Optional[Path] = None) -> dict:
     """NIMH scraper config with defaults."""
-    pipeline = get_pipeline_config(project_root)
     root = project_root or _project_root()
+    pipeline = get_pipeline_config(project_root)
     paths = pipeline.get("paths", {})
     data_dir = Path(paths.get("data_dir", "data"))
     raw_subdir = paths.get("raw_subdir", "raw")
@@ -128,6 +128,7 @@ def get_nimh_config(project_root: Optional[Path] = None) -> dict:
         "user_agent": nimh.get("user_agent", "CareConnect-Research/1.0 (university research project)"),
         "output_dir": root / data_dir / raw_subdir / "nimh",
         "output_filename": nimh.get("output_filename", "nimh_raw.json"),
+        "search_max_results": int(nimh.get("search_max_results", 20)),
     }
 
 
@@ -178,6 +179,9 @@ def get_rag_config(project_root: Optional[Path] = None) -> dict:
         "chroma_persist_directory": emb_cfg["chroma_persist_directory"],
         "collection_name": emb_cfg["collection_name"],
         "embedding_model_name": emb_cfg["model_name"],
+        "response_cache_enabled": bool(rag.get("response_cache_enabled", True)),
+        "response_cache_max_entries": int(rag.get("response_cache_max_entries", 256)),
+        "response_cache_version": str(rag.get("response_cache_version", "1")),
     }
 
 

@@ -11,6 +11,7 @@ import requests
 from sentence_transformers import SentenceTransformer
 
 from src.config import get_project_root, get_rag_config
+from src.rag.response_cache import build_cache_key, get_response_cache
 
 # Debug: log retrieved chunks + CoT to logs/rag_chunks.log when rag_debug_log is true
 RAG_DEBUG_LOG_NAME = "rag_chunks.log"
@@ -89,6 +90,7 @@ def retrieve(
     query: str,
     top_k: Optional[int] = None,
     project_root: Optional[Path] = None,
+    source: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Embed the query, search ChromaDB, return list of chunk dicts (text + metadata).
@@ -100,11 +102,14 @@ def retrieve(
     model = _get_embedding_model(cfg["embedding_model_name"])
     query_embedding = model.encode([query], show_progress_bar=False).tolist()[0]
 
-    results = collection.query(
-        query_embeddings=[query_embedding],
-        n_results=top_k,
-        include=["documents", "metadatas"],
-    )
+    query_kwargs: Dict[str, Any] = {
+        "query_embeddings": [query_embedding],
+        "n_results": top_k,
+        "include": ["documents", "metadatas"],
+    }
+    if source:
+        query_kwargs["where"] = {"source": source}
+    results = collection.query(**query_kwargs)
     chunks = []
     if results["documents"] and results["documents"][0]:
         for i, doc in enumerate(results["documents"][0]):
@@ -117,6 +122,7 @@ def retrieve_with_distances(
     query: str,
     top_k: Optional[int] = None,
     project_root: Optional[Path] = None,
+    source: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Like retrieve() but each chunk includes a "distance" key (ChromaDB L2 or cosine distance).
@@ -129,11 +135,14 @@ def retrieve_with_distances(
     model = _get_embedding_model(cfg["embedding_model_name"])
     query_embedding = model.encode([query], show_progress_bar=False).tolist()[0]
 
-    results = collection.query(
-        query_embeddings=[query_embedding],
-        n_results=top_k,
-        include=["documents", "metadatas", "distances"],
-    )
+    query_kwargs: Dict[str, Any] = {
+        "query_embeddings": [query_embedding],
+        "n_results": top_k,
+        "include": ["documents", "metadatas", "distances"],
+    }
+    if source:
+        query_kwargs["where"] = {"source": source}
+    results = collection.query(**query_kwargs)
     chunks = []
     if results["documents"] and results["documents"][0]:
         distances = (results.get("distances") or [[]])[0] if results.get("distances") else []
@@ -207,23 +216,38 @@ def rag_query(
     query: str,
     top_k: Optional[int] = None,
     project_root: Optional[Path] = None,
+    source: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Run RAG: retrieve relevant chunks from ChromaDB, then ask Ollama (DeepSeek R1) to answer.
     Returns {"answer": str, "chunks": list of retrieved chunk dicts}.
+    When response_cache_enabled is true, identical normalized queries reuse the prior answer
+    and chunks without retrieval or LLM calls (until LRU eviction or cache version bump).
     """
     root = project_root or get_project_root()
     cfg = get_rag_config(root)
     top_k = top_k or cfg["top_k"]
 
-    chunks = retrieve(query, top_k=top_k, project_root=root)
+    if cfg.get("response_cache_enabled"):
+        cache = get_response_cache(cfg["response_cache_max_entries"])
+        cache_key = build_cache_key(query, top_k, cfg, source=source)
+        hit = cache.get(cache_key)
+        if hit is not None:
+            return hit
+
+    chunks = retrieve(query, top_k=top_k, project_root=root, source=source)
     if cfg.get("rag_debug_log"):
         _log_chunks_to_file(root, query, chunks, top_k)
     if not chunks:
-        return {
+        out = {
             "answer": "No relevant context found in the knowledge base. Try rephrasing or a different question.",
             "chunks": [],
         }
+        if cfg.get("response_cache_enabled"):
+            get_response_cache(cfg["response_cache_max_entries"]).set(
+                build_cache_key(query, top_k, cfg, source=source), out
+            )
+        return out
 
     user_content = _build_rag_prompt(chunks, query, cfg["system_prompt"])
     messages = []
@@ -236,4 +260,9 @@ def rag_query(
         project_root=root,
         debug_query=query if cfg.get("rag_debug_log") else None,
     )
-    return {"answer": answer, "chunks": chunks}
+    result = {"answer": answer, "chunks": chunks}
+    if cfg.get("response_cache_enabled"):
+        get_response_cache(cfg["response_cache_max_entries"]).set(
+            build_cache_key(query, top_k, cfg, source=source), result
+        )
+    return result

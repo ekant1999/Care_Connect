@@ -7,12 +7,16 @@ For each NIMH URL in the topic tree:
 3. Preserve heading structure for chunking context
 4. Strip HTML and clean text via shared cleaner
 5. Save raw JSON to the configured output directory
+
+Search-driven extraction uses DuckDuckGo HTML search (site:nimh.nih.gov)
+to discover page URLs — no API key required.
 """
 import hashlib
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -31,10 +35,145 @@ CONTENT_SELECTORS = [
     ("div", {"id": "block-nimhtheme-content"}),
 ]
 
+# NIMH listing pages that enumerate all topics and publications
+NIMH_LISTING_PAGES = [
+    "https://www.nimh.nih.gov/health/topics",
+    "https://www.nimh.nih.gov/health/publications",
+    "https://www.nimh.nih.gov/health/statistics",
+]
+
+
+class NimhSearchError(Exception):
+    """Raised when NIMH search cannot return URLs."""
+
+
+def _normalize_nimh_url(url: str) -> Optional[str]:
+    """Keep only https URLs on www.nimh.nih.gov, strip fragments."""
+    if not url or not url.strip():
+        return None
+    u = url.strip().split("#")[0]
+    try:
+        parsed = urlparse(u)
+    except Exception:
+        return None
+    host = (parsed.netloc or "").lower()
+    if "nimh.nih.gov" not in host:
+        return None
+    if parsed.scheme not in ("http", "https"):
+        return None
+    if parsed.scheme == "http":
+        return u.replace("http://", "https://", 1)
+    return u
+
+
+def _listing_links(listing_url: str, *, timeout: int, user_agent: str) -> List[Tuple[str, str]]:
+    """
+    Fetch a NIMH listing page and return (link_text, full_url) pairs for
+    individual content pages (paths with at least 3 segments under /health/).
+    """
+    headers = {"User-Agent": user_agent}
+    resp = requests.get(listing_url, headers=headers, timeout=timeout)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
+    pairs: List[Tuple[str, str]] = []
+    seen: set = set()
+    for a in soup.find_all("a", href=True):
+        href = (a["href"] or "").strip().split("#")[0]
+        if not href:
+            continue
+        if href.startswith("/"):
+            href = "https://www.nimh.nih.gov" + href
+        url = _normalize_nimh_url(href)
+        if not url or url in seen:
+            continue
+        # Keep only individual content pages (not the listing pages themselves)
+        path = urlparse(url).path.rstrip("/")
+        segments = [s for s in path.split("/") if s]
+        if len(segments) < 3:
+            continue
+        seen.add(url)
+        pairs.append((a.get_text(strip=True), url))
+    return pairs
+
+
+def fetch_nimh_search_urls(
+    query: str,
+    *,
+    max_results: int,
+    timeout: int,
+    user_agent: str = "CareConnect-Research/1.0 (university research project)",
+) -> List[str]:
+    """
+    Discover NIMH page URLs matching a query by scraping NIMH's own listing
+    pages (/health/topics, /health/publications, /health/statistics) and
+    filtering by keyword match in the link text or URL slug. No API key needed.
+    """
+    q = (query or "").strip()
+    if not q:
+        return []
+
+    cap = max(1, min(int(max_results), 100))
+    keywords = [w.lower() for w in q.split() if len(w) > 2]
+
+    collected: List[str] = []
+    seen: set = set()
+
+    for listing in NIMH_LISTING_PAGES:
+        try:
+            pairs = _listing_links(listing, timeout=timeout, user_agent=user_agent)
+        except Exception:
+            continue
+        for text, url in pairs:
+            if url in seen:
+                continue
+            slug = urlparse(url).path.lower()
+            haystack = (text + " " + slug).lower()
+            if any(kw in haystack for kw in keywords):
+                seen.add(url)
+                collected.append(url)
+            if len(collected) >= cap:
+                break
+        if len(collected) >= cap:
+            break
+
+    if not collected:
+        raise NimhSearchError(
+            "No NIMH pages found matching %r in topics, publications, or statistics listings." % q
+        )
+
+    return collected[:cap]
+
+
+def _collect_url_topic_pairs(
+    topic_tree: Dict[str, Any],
+    *,
+    search_urls: Optional[List[str]],
+    search_query: Optional[str],
+    search_only: bool,
+) -> List[Tuple[str, str]]:
+    """Build ordered (url, topic_label) list; topic tree first unless search_only."""
+    pairs: List[Tuple[str, str]] = []
+    seen = set()
+
+    if not search_only:
+        for topic_name, topic_config in topic_tree.items():
+            for url in topic_config.get("nimh_pages", []) or []:
+                if url and url not in seen:
+                    seen.add(url)
+                    pairs.append((url, topic_name))
+
+    if search_query and search_urls:
+        label = "search:%s" % search_query.strip()
+        for url in search_urls:
+            if url and url not in seen:
+                seen.add(url)
+                pairs.append((url, label))
+
+    return pairs
+
 
 def _find_content(soup: BeautifulSoup) -> Optional[Any]:
     """Find the main content container on an NIMH page (article body, not gov banner)."""
-    # Prefer known main-content containers (no banner)
     for tag, kwargs in CONTENT_SELECTORS:
         el = soup.find(tag, **kwargs)
         if el and len(el.get_text(separator=" ", strip=True)) > 200:
@@ -133,10 +272,15 @@ class NIMHExtractor(BaseExtractor):
         self,
         output_dir: Optional[Path] = None,
         topic_tree: Optional[Dict] = None,
+        *,
+        search_query: Optional[str] = None,
+        search_only: bool = False,
+        search_max: Optional[int] = None,
         **kwargs: Any,
     ) -> List[Dict[str, Any]]:
         """
         Fetch all NIMH pages listed in the topic tree. Deduplicates by URL.
+        Optionally merge or replace with URLs from DuckDuckGo site search.
         """
         topic_tree = topic_tree or self._topic_tree
         out_dir = Path(output_dir) if output_dir else self._config["output_dir"]
@@ -147,24 +291,34 @@ class NIMHExtractor(BaseExtractor):
         user_agent = self._config["user_agent"]
         output_filename = self._config["output_filename"]
 
+        search_urls: Optional[List[str]] = None
+        sq = (search_query or "").strip()
+        if sq:
+            max_r = int(search_max if search_max is not None else self._config["search_max_results"])
+            search_urls = fetch_nimh_search_urls(sq, max_results=max_r, timeout=timeout, user_agent=user_agent)
+            self._log.info("Search %r returned %d URL(s)", sq, len(search_urls))
+
+        url_topic_pairs = _collect_url_topic_pairs(
+            topic_tree,
+            search_urls=search_urls,
+            search_query=sq if sq else None,
+            search_only=search_only,
+        )
+        if not url_topic_pairs:
+            self._log.warning("No NIMH URLs to fetch (empty topic list and search).")
+
         all_docs: Dict[str, Dict[str, Any]] = {}
 
-        for topic_name, topic_config in topic_tree.items():
-            urls = topic_config.get("nimh_pages", [])
-            for url in urls:
-                self._log.info("Fetching: %s (topic: %s)", url, topic_name)
-                try:
-                    doc = extract_nimh_page(
-                        url,
-                        timeout=timeout,
-                        user_agent=user_agent,
-                    )
-                    if doc:
-                        doc["topic"] = topic_name
-                        all_docs[url] = doc
-                except Exception as e:
-                    self._log.exception("Error for %s: %s", url, e)
-                time.sleep(delay)
+        for url, topic_name in url_topic_pairs:
+            self._log.info("Fetching: %s (topic: %s)", url, topic_name)
+            try:
+                doc = extract_nimh_page(url, timeout=timeout, user_agent=user_agent)
+                if doc:
+                    doc["topic"] = topic_name
+                    all_docs[url] = doc
+            except Exception as e:
+                self._log.exception("Error for %s: %s", url, e)
+            time.sleep(delay)
 
         docs_list = list(all_docs.values())
         output_file = out_dir / output_filename

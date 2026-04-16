@@ -131,7 +131,7 @@ topic_tree:
       - "https://www.nimh.nih.gov/health/topics/anxiety-disorders"
       - "https://www.nimh.nih.gov/health/topics/obsessive-compulsive-disorder-ocd"
       - "https://www.nimh.nih.gov/health/topics/post-traumatic-stress-disorder-ptsd"
-      - "https://www.nimh.nih.gov/health/publications/anxiety-disorders"
+      - "https://www.nimh.nih.gov/health/publications/anxiety-disorders-listing"
       - "https://www.nimh.nih.gov/health/publications/panic-disorder-when-fear-overwhelms"
       - "https://www.nimh.nih.gov/health/publications/social-anxiety-disorder-more-than-just-shyness"
 
@@ -187,9 +187,7 @@ topic_tree:
       - "sleep interventions digital"
       - "napping cognitive performance"
       - "sleep and substance use college"
-    nimh_pages:
-      - "https://www.nimh.nih.gov/health/topics/sleep-disorders"
-      - "https://www.nimh.nih.gov/health/publications/tips-for-healthy-sleep"
+    nimh_pages: []
 
   eating_disorders:
     description: "Eating disorders and body image"

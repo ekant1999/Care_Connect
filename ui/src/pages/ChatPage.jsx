@@ -30,7 +30,15 @@ export default function ChatPage() {
     scrollToBottom();
   }, [messages, isTyping]);
 
-  const apiBase = import.meta.env.VITE_API_URL || "http://localhost:8000";
+  // Default API origin uses 127.0.0.1 (not "localhost") so the browser does not hit IPv6 ::1
+  // while Uvicorn listens on IPv4-only 127.0.0.1 — that mismatch causes "Failed to fetch".
+  // Override with VITE_API_URL when deploying the UI and API on different hosts.
+  const apiOrigin = (
+    import.meta.env.VITE_API_URL ?? ""
+  )
+    .trim()
+    .replace(/\/$/, "");
+  const apiBase = apiOrigin || "http://127.0.0.1:8000";
 
   const handleSendMessage = async (text) => {
     if (!text.trim()) return;

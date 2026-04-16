@@ -31,6 +31,7 @@ nimh:
   request_timeout_seconds: 30
   user_agent: "CareConnect-Research/1.0 (university research project)"
   output_filename: "nimh_raw.json"
+  search_max_results: 20
 
 # Chunking (for RAG)
 chunking:
@@ -55,6 +56,10 @@ rag:
   ollama_timeout_seconds: 120
   ollama_think: true
   rag_debug_log: true  # set false to disable chunk + CoT logging to logs/rag_chunks.log
+  # Exact-match response cache (same normalized user message + same RAG settings)
+  response_cache_enabled: true
+  response_cache_max_entries: 256
+  response_cache_version: "1"  # bump after reindexing or prompt/model changes you want to invalidate
   system_prompt: |
     You are Care Connect, a mental health information assistant for university
     students. Your role is to provide clear, supportive health information —

@@ -1,6 +1,7 @@
 """
 CLI entrypoint for the Care Connect data extraction pipeline.
 Run: python -m src.cli extract medlineplus | pubmed | nimh
+     python -m src.cli extract nimh --search "depression"
      python -m src.cli process   # chunk, embed, store in ChromaDB
 """
 from pathlib import Path
@@ -10,7 +11,7 @@ import click
 
 from src.config import get_project_root
 from src.extractors.medlineplus import MedlinePlusExtractor
-from src.extractors.nimh import NIMHExtractor
+from src.extractors.nimh import NIMHExtractor, NimhSearchError
 from src.extractors.pubmed import PubMedExtractor
 from src.lookup import get_document_full_text, topic_lookup
 from src.pipeline import run_process
@@ -41,14 +42,20 @@ def process(no_replace: bool) -> None:
 @click.argument("question", nargs=-1, required=True)
 @click.option("--top-k", type=int, default=None, help="Number of chunks to retrieve (default: config).")
 @click.option("--show-chunks", is_flag=True, help="Print retrieved chunk snippets.")
-def query(question: tuple, top_k: Optional[int], show_chunks: bool) -> None:
+@click.option(
+    "--source",
+    type=click.Choice(["medlineplus", "pubmed", "nimh"]),
+    default=None,
+    help="Filter retrieval to a single source.",
+)
+def query(question: tuple, top_k: Optional[int], show_chunks: bool, source: Optional[str]) -> None:
     """RAG query: retrieve from ChromaDB + generate answer with Ollama (DeepSeek R1)."""
     setup_logger()
     q = " ".join(question).strip()
     if not q:
         click.echo("Provide a question, e.g. python -m src.cli query 'what is depression?'")
         raise SystemExit(1)
-    result = rag_query(q, top_k=top_k)
+    result = rag_query(q, top_k=top_k, source=source)
     click.echo("\nAnswer:\n")
     click.echo(result["answer"])
     if show_chunks and result.get("chunks"):
@@ -113,8 +120,36 @@ def show(topic: tuple, url: str) -> None:
     default=None,
     help="Override output directory for raw data (default: config paths).",
 )
-def extract(source: str, output_dir: Optional[Path]) -> None:
+@click.option(
+    "--search",
+    "search_query",
+    default=None,
+    help="NIMH only: search nimh.nih.gov via DuckDuckGo and scrape the result URLs.",
+)
+@click.option(
+    "--search-only",
+    is_flag=True,
+    help="NIMH only: scrape only URLs from --search, not topics.yaml.",
+)
+@click.option(
+    "--search-max",
+    type=int,
+    default=None,
+    help="NIMH only: max URLs from search (default: config nimh.search_max_results).",
+)
+def extract(
+    source: str,
+    output_dir: Optional[Path],
+    search_query: Optional[str],
+    search_only: bool,
+    search_max: Optional[int],
+) -> None:
     """Extract data from a source and save to the filesystem."""
+    if source != "nimh" and (search_query or search_only or search_max is not None):
+        raise click.BadParameter("--search / --search-only / --search-max apply only to nimh.")
+    if search_only and not (search_query or "").strip():
+        raise click.BadParameter("--search-only requires --search.")
+
     root = get_project_root()
     if source == "medlineplus":
         extractor = MedlinePlusExtractor(project_root=root)
@@ -124,7 +159,15 @@ def extract(source: str, output_dir: Optional[Path]) -> None:
         extractor.run(output_dir=output_dir)
     elif source == "nimh":
         extractor = NIMHExtractor(project_root=root)
-        extractor.run(output_dir=output_dir)
+        try:
+            extractor.run(
+                output_dir=output_dir,
+                search_query=(search_query or "").strip() or None,
+                search_only=search_only,
+                search_max=search_max,
+            )
+        except NimhSearchError as e:
+            raise click.ClickException(str(e)) from e
     else:
         raise click.BadParameter(f"Unknown source: {source}")
 

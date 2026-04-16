@@ -22,4 +22,5 @@ package-dir = {"" = "."}
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["src*"]
+# Include api/ so `pip install -e .` makes `import api` work from any cwd (uvicorn).
+include = ["src*", "api*"]
